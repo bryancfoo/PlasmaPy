@@ -1345,7 +1345,7 @@ def _spectral_density_model(wavelengths, settings=None, **params):
         notches=notches,
     )
 
-    model_Skw *= 1 / np.max(model_Skw, wavelengths)
+    model_Skw *= 1 / np.max(model_Skw)
 
     return model_Skw
 
