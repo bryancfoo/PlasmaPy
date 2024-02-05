@@ -1,0 +1,3 @@
+import plasmapy.diagnostics.thomson as thomson
+
+thomson.spectral_density_supergaussian
