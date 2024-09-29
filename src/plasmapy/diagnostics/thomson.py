@@ -5,6 +5,7 @@ Defines the Thomson scattering analysis module as part of
 
 __all__ = [
     "spectral_density",
+    "spectral_density_maxwellian",
     "spectral_density_model",
 ]
 __lite_funcs__ = ["spectral_density_lite"]
@@ -15,7 +16,9 @@ from typing import Any
 
 import astropy.constants as const
 import astropy.units as u
+from numpy.core.multiarray import interp as compiled_interp
 import numpy as np
+
 from lmfit import Model
 
 from plasmapy.formulary import (
@@ -46,9 +49,494 @@ m_e_si_unitless = const.m_e.si.value
 #     included ion and electron drift velocities and information about the ion
 #     atomic species.
 
+def derivative_high_precision(f, x):
+    diff = x[1:] - x[:-1]
+    dx = diff[0]
+    fprime = np.zeros(np.shape(f))
+
+    fprime[0] = (-25 / 12 * f[0] + 4 * f[1] - 3 * f[2] + 4 / 3 * f[3] - 1 / 4 * f[4]) / dx
+    fprime[1] = (-25 / 12 * f[1] + 4 * f[2] - 3 * f[3] + 4 / 3 * f[4] - 1 / 4 * f[5]) / dx
+    fprime[-1] = (1 / 4 * f[-5] - 4 / 3 * f[-4] + 3 * f[-3] - 4 * f[-2] + 25 / 12 * f[-1]) / dx
+    fprime[-2] = (1 / 4 * f[-6] - 4 / 3 * f[-5] + 3 * f[-4] - 4 * f[-3] + 25 / 12 * f[-2]) / dx
+    fprime[2:-2] = (-f[4:] + 8 * f[3:-1] - 8 * f[1:-3] + f[:-4]) / (12 * dx)
+
+    return fprime
+
+def second_derivative_high_precision(f, x):
+    diff = x[1:] - x[:-1]
+    dx = diff[0]
+    fdoubleprime = np.zeros(np.shape(f))
+
+    fdoubleprime[0] = (
+                        15 / 4 * f[0]
+                        - 77 / 6 * f[1]
+                        + 107 / 6 * f[2]
+                        - 13 * f[3]
+                        + 61 / 12 * f[4]
+                        - 5 / 6 * f[5]
+                ) / dx ** 2
+    fdoubleprime[1] = (
+                        15 / 4 * f[1]
+                        - 77 / 6 * f[2]
+                        + 107 / 6 * f[3]
+                        - 13 * f[4]
+                        + 61 / 12 * f[5]
+                        - 5 / 6 * f[6]
+                ) / dx ** 2
+    fdoubleprime[-1] = (
+                         15 / 4 * f[-1]
+                         - 77 / 6 * f[-2]
+                         + 107 / 6 * f[-3]
+                         - 13 * f[-4]
+                         + 61 / 12 * f[-5]
+                         - 5 / 6 * f[-6]
+                 ) / dx ** 2
+    fdoubleprime[-2] = (
+                         15 / 4 * f[-2]
+                         - 77 / 6 * f[-3]
+                         + 107 / 6 * f[-4]
+                         - 13 * f[-5]
+                         + 61 / 12 * f[-6]
+                         - 5 / 6 * f[-7]
+                 ) / dx ** 2
+    fdoubleprime[2:-2] = (
+                -1 / 12 * f[:-4]
+                + 4 / 3 * f[1:-3]
+                - 5 / 2 * f[2:-2]
+                + 4 / 3 * f[3:-1]
+                - 1 / 12 * f[4:]
+            ) / dx ** 2
+
+    return fdoubleprime
+
+def principal_value(f, x, xi, delta_inner, N_inner = 100, phi = 1e-5):
+    xi_T = xi[:, np.newaxis]
+    x_2d = x * np.ones(np.shape(xi_T))
+    xi_2d = xi_T * np.ones(np.shape(x))
+    f_2d = f * np.ones(np.shape(xi_T))
+
+    z_lower_inner_array = np.linspace(xi - delta_inner, xi - phi, N_inner).T
+    z_upper_inner_array = np.linspace(xi + phi, xi + delta_inner, N_inner).T
+
+    z_lower_outer_array = (x[np.argmin(x_2d < xi_T - delta_inner, axis = 1) - 1] * np.ones(np.shape(xi_2d)).T).T * (x_2d >= xi_2d - delta_inner) + x_2d * (x_2d < xi_2d - delta_inner)
+    z_upper_outer_array = (x[np.argmax(x_2d > xi_T + delta_inner, axis = 1)] * np.ones(np.shape(xi_2d)).T).T * (x_2d <= xi_2d + delta_inner) + x_2d * (x_2d > xi_2d+delta_inner)
+
+    f_lower_inner_array = compiled_interp(z_lower_inner_array, x, f)
+    f_upper_inner_array = compiled_interp(z_upper_inner_array, x, f)
+
+    f_lower_outer_array = (f[np.argmin(x_2d < xi_T - delta_inner, axis = 1) - 1] * np.ones(np.shape(xi_2d)).T).T * (x_2d >= xi_2d - delta_inner) + f_2d * (x_2d < xi_2d - delta_inner)
+    f_upper_outer_array = (f[np.argmax(x_2d > xi_T + delta_inner, axis = 1)] * np.ones(np.shape(xi_2d)).T).T * (x_2d <= xi_2d + delta_inner) + f_2d * (x_2d > xi_2d+delta_inner)
+
+    #print(z_lower_inner_array)
+    z_lower_array = np.concatenate([z_lower_outer_array, z_lower_inner_array], axis = 1)
+    z_upper_array = np.concatenate([z_upper_inner_array, z_upper_outer_array], axis = 1)
+
+    f_lower_array = np.concatenate([f_lower_outer_array, f_lower_inner_array], axis = 1)
+    f_upper_array = np.concatenate([f_upper_inner_array, f_upper_outer_array], axis = 1)
+
+    lower_integrand = f_lower_array / (z_lower_array - xi_T)
+    upper_integrand = f_upper_array / (z_upper_array - xi_T)
+
+    lower_integral = np.trapz(lower_integrand, z_lower_array, axis = 1)
+    upper_integral = np.trapz(upper_integrand, z_upper_array, axis = 1)
+
+    #print("Integrand: ", lower_integrand)
+    #print(np.shape(lower_integrand))
+
+    return lower_integral+upper_integral
+
+def vth_nonmaxwellian(f, v):
+    '''Returns the thermal velocity corresponding to an arbitrary
+    distribution function, defined as the variance of the distribution.
+    For a Maxwellian this should return vth = sqrt(k_B T / m).'''
+    if f.ndim==2:
+        return np.sqrt(np.trapz(f*v**2, v, axis = 1) / np.trapz(f, v, axis = 1))
+    else:
+        return np.sqrt(np.trapz(f * v ** 2, v) / np.trapz(f, v))
+
+def chi_lite(wavelengths,
+        probe_wavelength,
+        f_k,
+        v_k,
+        n,
+        probe_vec,
+        scatter_vec,
+        z,
+        mass,
+        phi = 1e-5
+):
+    wpe = plasma_frequency_lite(n, m_e_si_unitless, 1)
+
+    scattering_angle = np.arccos(np.dot(probe_vec, scatter_vec))
+
+    # Convert wavelengths to angular frequencies (electromagnetic waves, so
+    # phase speed is c)
+    ws = 2 * np.pi * c_si_unitless / wavelengths
+    wl = 2 * np.pi * c_si_unitless / probe_wavelength
+
+    # Compute the frequency shift (required by energy conservation)
+    w = ws - wl
+
+    # Compute the wavenumbers in the plasma
+    # See Sheffield Sec. 1.8.1 and Eqs. 5.4.1 and 5.4.2
+    ks = np.sqrt(ws ** 2 - wpe ** 2) / c_si_unitless
+    kl = np.sqrt(wl ** 2 - wpe ** 2) / c_si_unitless
+
+    # Compute the wavenumber shift (required by momentum conservation)
+    # Eq. 1.7.10 in Sheffield
+    k = np.sqrt(ks ** 2 + kl ** 2 - 2 * ks * kl * np.cos(scattering_angle))
+    # Normal vector along k
+    k_vec = scatter_vec - probe_vec
+    k_vec = k_vec / np.linalg.norm(k_vec)
+
+    vph = w / k
+
+    vth_k = vth_nonmaxwellian(f_k, v_k)
+    fprime_k = derivative_high_precision(f_k, v_k)
+    fdoubleprime_k = second_derivative_high_precision(f_k, v_k)
+    chi_real = principal_value(fprime_k, v_k, vph, delta_inner=vth_k, phi = phi) + 2*phi*compiled_interp(vph, v_k, fdoubleprime_k)
+    chi_imag = np.pi * compiled_interp(vph, v_k, fprime_k)
+    return 4 * np.pi * e_si_unitless ** 2 * z ** 2 * n / (k * mass) * (chi_real + 1.j * chi_imag)
+
+
+def chi(wavelengths: u.Quantity[u.nm],
+        probe_wavelength: u.Quantity[u.nm],
+        f_k: u.Quantity[u.s / u.m],
+        v_k: u.Quantity[u.m / u.s],
+        n: u.Quantity[u.m**(-3)],
+        probe_vec,
+        scatter_vec,
+        z,
+        mass: u.Quantity[u.kg]
+        ):
+    if probe_vec is None:
+        probe_vec = np.array([1, 0, 0])
+
+    if scatter_vec is None:
+        scatter_vec = np.array([0, 1, 0])
+
+    if np.shape(f_k) != np.shape(v_k):
+        raise ValueError("f_k and v_k must be the same shape")
+
+    if f_k.ndim!=1:
+        raise ValueError("f_k must be a 1d array")
+
+    return chi_lite(
+        wavelengths=wavelengths.to(u.m).value,
+        probe_wavelength=probe_wavelength.to(u.m).value,
+        f_k = f_k.to(u.s / u.m).value,
+        v_k = v_k.to(u.m / u.s).value,
+        n = n.to(u.m**(-3)).value,
+        probe_vec=probe_vec,
+        scatter_vec=scatter_vec,
+        z = z,
+        mass=mass.to(u.kg).value
+    )
+
+def spectral_density_lite(
+        wavelengths,
+        probe_wavelength,
+        fe_k,
+        ve_k,
+        fi_k,
+        vi_k,
+        n,
+        efract,
+        ifract,
+        probe_vec,
+        scatter_vec,
+        ion_z,
+        ion_mass,
+        instr_func_arr: np.ndarray | None = None,
+        notch = None
+):
+    wpe = plasma_frequency_lite(n, m_e_si_unitless, 1)
+
+    scattering_angle = np.arccos(np.dot(probe_vec, scatter_vec))
+
+    # Convert wavelengths to angular frequencies (electromagnetic waves, so
+    # phase speed is c)
+    ws = 2 * np.pi * c_si_unitless / wavelengths
+    wl = 2 * np.pi * c_si_unitless / probe_wavelength
+
+    # Compute the frequency shift (required by energy conservation)
+    w = ws - wl
+
+    # Compute the wavenumbers in the plasma
+    # See Sheffield Sec. 1.8.1 and Eqs. 5.4.1 and 5.4.2
+    ks = np.sqrt(ws ** 2 - wpe ** 2) / c_si_unitless
+    kl = np.sqrt(wl ** 2 - wpe ** 2) / c_si_unitless
+
+    # Compute the wavenumber shift (required by momentum conservation)
+    # Eq. 1.7.10 in Sheffield
+    k = np.sqrt(ks ** 2 + kl ** 2 - 2 * ks * kl * np.cos(scattering_angle))
+    # Normal vector along k
+    k_vec = scatter_vec - probe_vec
+    k_vec = k_vec / np.linalg.norm(k_vec)
+
+    vph = w / k
+
+    chiE = np.zeros([efract.size, wavelengths.size], dtype=np.complex128)
+    chiI = np.zeros([ifract.size, wavelengths.size], dtype=np.complex128)
+
+    for i in range(efract.size):
+        chiE[i, :] = chi_lite(wavelengths=wavelengths,
+                              probe_wavelength=probe_wavelength,
+                              f_k = fe_k[i],
+                              v_k = ve_k[i],
+                              n = n * efract[i],
+                              probe_vec=probe_vec,
+                              scatter_vec=scatter_vec,
+                              z = 1,
+                              mass=m_e_si_unitless)
+    for i in range(ifract.size):
+        chiI[i, :] = chi_lite(wavelengths=wavelengths,
+                              probe_wavelength=probe_wavelength,
+                              f_k = fi_k[i],
+                              v_k = vi_k[i],
+                              n = n * ifract[i] / ion_z[i],
+                              probe_vec=probe_vec,
+                              scatter_vec=scatter_vec,
+                              z = ion_z[i],
+                              mass=ion_mass[i])
+
+    # Calculate the longitudinal dielectric function
+    epsilon = 1 + np.sum(chiE, axis=0) + np.sum(chiI, axis=0)
+
+    econtr = np.zeros([efract.size, w.size], dtype=np.complex128)
+    for m in range(efract.size):
+        econtr[m] = (efract[m] * (
+                2
+                * np.pi
+                / k
+                * np.power(np.abs(1 - np.sum(chiE, axis=0) / epsilon), 2)
+                * compiled_interp(vph, ve_k[m, :], fe_k[m, :])
+        )
+        )
+
+    icontr = np.zeros([ifract.size, w.size], dtype=np.complex128)
+    for m in range(ifract.size):
+        icontr[m] = ifract[m] * (
+                2
+                * np.pi
+                * ion_z[m]
+                / k
+                * np.power(np.abs(np.sum(chiE, axis=0) / epsilon), 2)
+                * np.interp(vph, vi_k[m, :], fi_k[m, :])
+        )
+
+    # Recast as real: imaginary part is already zero
+    Skw = np.real(np.sum(econtr, axis=0) + np.sum(icontr, axis=0))
+
+    # Apply an instrument function if one is provided
+    if instr_func_arr is not None:
+        Skw = np.convolve(Skw, instr_func_arr, mode="same")
+
+    # add notch(es) to the spectrum if any are provided
+    if notch is not None:
+        # If only one notch is included, create a dummy second dimension
+        if np.ndim(notch) == 1:
+            notch = np.array(
+                [
+                    notch,
+                ]
+            )
+
+        for notch_i in notch:
+            # For each notch, identify the index for the beginning and end
+            # wavelengths and set Skw to zero between those indices
+            x0 = np.argmin(np.abs(wavelengths - notch_i[0]))
+            x1 = np.argmin(np.abs(wavelengths - notch_i[1]))
+            Skw[x0:x1] = 0
+
+    vth_e = vth_nonmaxwellian(fe_k, ve_k)
+    alpha = np.sqrt(2) * wpe / (np.mean(k) * vth_e)
+
+    return np.mean(alpha), Skw
+
+def spectral_density(
+    wavelengths: u.Quantity[u.nm],
+    probe_wavelength: u.Quantity[u.nm],
+    *,
+    n: u.Quantity[u.m**-3],
+    fe_k: u.Quantity[u.s / u.m],
+    ve_k: u.Quantity[u.m / u.s],
+    fi_k: u.Quantity[u.s / u.m],
+    vi_k: u.Quantity[u.m / u.s],
+    efract=None,
+    ifract=None,
+    ions: ParticleLike = "p+",
+    probe_vec=None,
+    scatter_vec=None,
+    instr_func: Callable | None = None,
+    notch: u.m = None,
+):
+    # Validate efract
+    if efract is None:
+        efract = np.ones(1)
+    else:
+        efract = np.asarray(efract, dtype=np.float64)
+        if np.sum(efract) != 1:
+            raise ValueError(f"The provided efract does not sum to 1: {efract}")
+
+    # Validate ifract
+    if ifract is None:
+        ifract = np.ones(1)
+    else:
+        ifract = np.asarray(ifract, dtype=np.float64)
+        if np.sum(ifract) != 1:
+            raise ValueError(f"The provided ifract does not sum to 1: {ifract}")
+
+    if probe_vec is None:
+        probe_vec = np.array([1, 0, 0])
+
+    if scatter_vec is None:
+        scatter_vec = np.array([0, 1, 0])
+
+    # Condition ions
+    # If a single value is provided, turn into a particle list
+    if isinstance(ions, ParticleList):
+        pass
+    elif isinstance(ions, str):
+        ions = ParticleList([Particle(ions)])
+    # If a list is provided, ensure all values are Particles, then convert
+    # to a ParticleList
+    elif isinstance(ions, list):
+        for ii, ion in enumerate(ions):
+            if isinstance(ion, Particle):
+                continue
+            ions[ii] = Particle(ion)
+        ions = ParticleList(ions)
+    else:
+        raise TypeError(
+            "The type of object provided to the ``ions`` keyword "
+            f"is not supported: {type(ions)}"
+        )
+
+    # Validate ions
+    if len(ions) == 0:
+        raise ValueError("At least one ion species needs to be defined.")
+
+    try:
+        if sum(ion.charge_number <= 0 for ion in ions):
+            raise ValueError("All ions must be positively charged.")
+    # Catch error if charge information is missing
+    except ChargeError as ex:
+        raise ValueError("All ions must be positively charged.") from ex
+
+    # Condition ion distributions
+    if fi_k.ndim == 1:
+        # If a 1D array is given, nest it in another array so it's iterable
+        fi_k = np.array([fi_k])
+    # Normalize all VDFs
+    fi_k = fi_k / np.trapz(fi_k, vi_k, axis = 1)[:, np.newaxis]
+
+
+    # Condition electron distributions
+    if fe_k.ndim == 1:
+        # If a 1D array is given, nest it in another array so it's iterable
+        fe_k = np.array([fe_k])
+    fe_k = fe_k / np.trapz(fe_k, ve_k, axis=1)[:, np.newaxis]
+
+
+
+    # Make sure the sizes of ions, ifract, vi_k, and fi_k all match
+    if (
+            (len(ions) != ifract.size)
+            or (vi_k.shape[0] != ifract.size)
+            or (fi_k.shape[0] != ifract.size)
+    ):
+        raise ValueError(
+            f"Inconsistent number of ion species in ifract ({ifract.size}), "
+            f"ions ({len(ions)}), vi_k ({vi_k.shape[0]}), "
+            f"and/or fi_k ({fi_k.shape[0]})."
+        )
+
+        # Make sure the sizes of efract, ve_k, and fe_k all match
+        if (
+                (ve_k.shape[0] != efract.size)
+                or (fe_k.shape[0] != efract.size)
+        ):
+            raise ValueError(
+                f"Inconsistent number of electron populations in efract ({efract.size}), "
+                f"ve_k ({ve_k.shape[0]}), "
+                f"and/or fe_k ({fe_k.shape[0]})."
+            )
+
+    probe_vec = probe_vec / np.linalg.norm(probe_vec)
+    scatter_vec = scatter_vec / np.linalg.norm(scatter_vec)
+
+    # Apply the instrument function
+    if instr_func is not None and callable(instr_func):
+        # Create an array of wavelengths of the same size as wavelengths
+        # but centered on zero
+        wspan = (np.max(wavelengths) - np.min(wavelengths)) / 2
+        eval_w = np.linspace(-wspan, wspan, num=wavelengths.size)
+        instr_func_arr = instr_func(eval_w)
+
+        if type(instr_func_arr) != np.ndarray:
+            raise ValueError(
+                "instr_func must be a function that returns a "
+                "np.ndarray, but the provided function returns "
+                f" a {type(instr_func_arr)}"
+            )
+
+        if wavelengths.shape != instr_func_arr.shape:
+            raise ValueError(
+                "The shape of the array returned from the "
+                f"instr_func ({instr_func_arr.shape}) "
+                "does not match the shape of the wavelengths "
+                f"array ({wavelengths.shape})."
+            )
+
+        instr_func_arr /= np.sum(instr_func_arr)
+    else:
+        instr_func_arr = None
+
+    # Valildate notch input
+    if notch is not None:
+        notch_unitless = notch.to(u.m).value
+
+        if np.ndim(notch_unitless) == 1:
+            notch_unitless = np.array([notch_unitless])
+
+        for notch_i in notch_unitless:
+            if np.shape(notch_i) != (2,):
+                raise ValueError("Notches must be pairs of values.")
+            if notch_i[0] > notch_i[1]:
+                raise ValueError(
+                    "The first element of the notch cannot be greater than "
+                    "the second element."
+                )
+    else:
+        notch_unitless = None
+
+    alpha, Skw = spectral_density_lite(
+        wavelengths=wavelengths.to(u.m).value,
+        probe_wavelength=probe_wavelength.to(u.m).value,
+        fe_k = fe_k.to(u.s/u.m).value,
+        ve_k = ve_k.to(u.m/u.s).value,
+        fi_k = fi_k.to(u.s / u.m).value,
+        vi_k = vi_k.to(u.m / u.s).value,
+        n = n.to(u.m**(-3)).value,
+        efract = efract,
+        ifract = ifract,
+        probe_vec=probe_vec,
+        scatter_vec=scatter_vec,
+        ion_z = ions.charge_number,
+        ion_mass = ions.mass.to(u.kg).value,
+        instr_func_arr=instr_func_arr,
+        notch = notch_unitless
+    )
+
+    return alpha, Skw * u.s / u.rad
+
+
+
+
 
 @preserve_signature
-def spectral_density_lite(
+def spectral_density_maxwellian_lite(
     wavelengths,
     probe_wavelength: float,
     n: float,
@@ -67,9 +555,9 @@ def spectral_density_lite(
 ) -> tuple[np.floating | np.ndarray, np.ndarray]:
     r"""
     The :term:`lite-function` version of
-    `~plasmapy.diagnostics.thomson.spectral_density`.  Performs the same
+    `~plasmapy.diagnostics.thomson.spectral_density_maxwellian`.  Performs the same
     thermal speed calculations as
-    `~plasmapy.diagnostics.thomson.spectral_density`, but is intended
+    `~plasmapy.diagnostics.thomson.spectral_density_maxwellian`, but is intended
     for computational use and thus has data conditioning safeguards
     removed.
 
@@ -111,7 +599,7 @@ def spectral_density_lite(
         species.
 
     ion_mass : (Ni,) `~numpy.ndarray`
-        An `~numpy.ndarray` of the mass number of each ion species in kg.
+        An `~numpy.ndarray` of the mass of each ion species in kg.
 
     electron_vel : (Ne, 3) `~numpy.ndarray`
         Velocity of each electron population in the rest frame (in m/s).
@@ -285,8 +773,8 @@ def spectral_density_lite(
     T_e={"can_be_negative": False, "equivalencies": u.temperature_energy()},
     T_i={"can_be_negative": False, "equivalencies": u.temperature_energy()},
 )
-@bind_lite_func(spectral_density_lite)
-def spectral_density(  # noqa: C901, PLR0912, PLR0915
+@bind_lite_func(spectral_density_maxwellian_lite)
+def spectral_density_maxwellian(  # noqa: C901, PLR0912, PLR0915
     wavelengths: u.Quantity[u.nm],
     probe_wavelength: u.Quantity[u.nm],
     n: u.Quantity[u.m**-3],
@@ -592,7 +1080,7 @@ def spectral_density(  # noqa: C901, PLR0912, PLR0915
     else:
         notch_unitless = None
 
-    alpha, Skw = spectral_density_lite(
+    alpha, Skw = spectral_density_maxwellian_lite(
         wavelengths.to(u.m).value,
         probe_wavelength.to(u.m).value,
         n.to(u.m**-3).value,
@@ -615,7 +1103,7 @@ def spectral_density(  # noqa: C901, PLR0912, PLR0915
 
 # ***************************************************************************
 # These functions are necessary to interface scalar Parameter objects with
-# the array inputs of spectral_density
+# the array inputs of spectral_density_maxwellian
 # ***************************************************************************
 
 
@@ -674,7 +1162,7 @@ def _params_to_array(
 # ***************************************************************************
 
 
-def _spectral_density_model(wavelengths, settings=None, **params):
+def _spectral_density_maxwellian_model(wavelengths, settings=None, **params):
     """
     lmfit Model function for fitting Thomson spectra.
 
@@ -713,7 +1201,7 @@ def _spectral_density_model(wavelengths, settings=None, **params):
     # lite function takes ion mass, not mu=m_i/m_p
     ion_mass = ion_mu * m_p_si_unitless
 
-    alpha, model_Skw = spectral_density_lite(
+    alpha, model_Skw = spectral_density_maxwellian_lite(
         wavelengths,
         probe_wavelength,
         n,
@@ -739,7 +1227,7 @@ def _spectral_density_model(wavelengths, settings=None, **params):
     return model_Skw
 
 
-def spectral_density_model(  # noqa: C901, PLR0912, PLR0915
+def spectral_density_maxwellian_model(  # noqa: C901, PLR0912, PLR0915
     wavelengths, settings, params
 ):
     r"""
@@ -993,12 +1481,12 @@ def spectral_density_model(  # noqa: C901, PLR0912, PLR0915
     #       quantities isn't consistent with the number of that species defined
     #       by ifract or efract.
 
-    def _spectral_density_model_lambda(wavelengths, **params):
-        return _spectral_density_model(wavelengths, settings=settings, **params)
+    def _spectral_density_maxwellian_model_lambda(wavelengths, **params):
+        return _spectral_density_maxwellian_model(wavelengths, settings=settings, **params)
 
     # Create and return the lmfit.Model
     return Model(
-        _spectral_density_model_lambda,
+        _spectral_density_maxwellian_model_lambda,
         independent_vars=["wavelengths"],
         nan_policy="omit",
     )
