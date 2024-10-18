@@ -16,6 +16,7 @@ from typing import Any
 
 import astropy.constants as const
 import astropy.units as u
+from scipy.constants import epsilon_0 as eps0
 from numpy.core.multiarray import interp as compiled_interp
 import numpy as np
 
@@ -150,85 +151,51 @@ def vth_nonmaxwellian(f, v):
     distribution function, defined as the variance of the distribution.
     For a Maxwellian this should return vth = sqrt(k_B T / m).'''
     if f.ndim==2:
-        return np.sqrt(np.trapz(f*v**2, v, axis = 1) / np.trapz(f, v, axis = 1))
+        return np.sqrt((np.trapz(f*v**2, v, axis = 1) - np.trapz(f*v, v, axis = 1)**2)/ np.trapz(f, v, axis = 1))
     else:
-        return np.sqrt(np.trapz(f * v ** 2, v) / np.trapz(f, v))
+        return np.sqrt((np.trapz(f*v**2, v)-np.trapz(f*v, v)**2)/ np.trapz(f, v)) * np.sqrt(2)
 
-def chi_lite(wavelengths,
-        probe_wavelength,
+def chi_lite(
+        k,
+        w,
         f_k,
         v_k,
         n,
-        probe_vec,
-        scatter_vec,
         z,
         mass,
-        phi = 1e-5
+        N_inner = 100,
+        phi = 1e-5,
 ):
-    wpe = plasma_frequency_lite(n, m_e_si_unitless, 1)
-
-    scattering_angle = np.arccos(np.dot(probe_vec, scatter_vec))
-
-    # Convert wavelengths to angular frequencies (electromagnetic waves, so
-    # phase speed is c)
-    ws = 2 * np.pi * c_si_unitless / wavelengths
-    wl = 2 * np.pi * c_si_unitless / probe_wavelength
-
-    # Compute the frequency shift (required by energy conservation)
-    w = ws - wl
-
-    # Compute the wavenumbers in the plasma
-    # See Sheffield Sec. 1.8.1 and Eqs. 5.4.1 and 5.4.2
-    ks = np.sqrt(ws ** 2 - wpe ** 2) / c_si_unitless
-    kl = np.sqrt(wl ** 2 - wpe ** 2) / c_si_unitless
-
-    # Compute the wavenumber shift (required by momentum conservation)
-    # Eq. 1.7.10 in Sheffield
-    k = np.sqrt(ks ** 2 + kl ** 2 - 2 * ks * kl * np.cos(scattering_angle))
-    # Normal vector along k
-    k_vec = scatter_vec - probe_vec
-    k_vec = k_vec / np.linalg.norm(k_vec)
 
     vph = w / k
 
     vth_k = vth_nonmaxwellian(f_k, v_k)
     fprime_k = derivative_high_precision(f_k, v_k)
     fdoubleprime_k = second_derivative_high_precision(f_k, v_k)
-    chi_real = principal_value(fprime_k, v_k, vph, delta_inner=vth_k, phi = phi) + 2*phi*compiled_interp(vph, v_k, fdoubleprime_k)
+    chi_real = principal_value(fprime_k, v_k, vph, delta_inner=vth_k, N_inner = N_inner, phi = phi) + 2*phi*compiled_interp(vph, v_k, fdoubleprime_k)
     chi_imag = np.pi * compiled_interp(vph, v_k, fprime_k)
-    return 4 * np.pi * e_si_unitless ** 2 * z ** 2 * n / (k * mass) * (chi_real + 1.j * chi_imag)
+    return -e_si_unitless ** 2 * z ** 2 * n / (k**2 * mass * eps0) * (chi_real + 1.j * chi_imag)
 
-
-def chi(wavelengths: u.Quantity[u.nm],
-        probe_wavelength: u.Quantity[u.nm],
+def chi(k: u.Quantity[u.m**(-1)],
+        w: u.Quantity[u.s**(-1)],
         f_k: u.Quantity[u.s / u.m],
         v_k: u.Quantity[u.m / u.s],
         n: u.Quantity[u.m**(-3)],
-        probe_vec,
-        scatter_vec,
         z,
-        mass: u.Quantity[u.kg]
+        mass: u.Quantity[u.kg],
         ):
-    if probe_vec is None:
-        probe_vec = np.array([1, 0, 0])
-
-    if scatter_vec is None:
-        scatter_vec = np.array([0, 1, 0])
 
     if np.shape(f_k) != np.shape(v_k):
         raise ValueError("f_k and v_k must be the same shape")
 
     if f_k.ndim!=1:
         raise ValueError("f_k must be a 1d array")
-
     return chi_lite(
-        wavelengths=wavelengths.to(u.m).value,
-        probe_wavelength=probe_wavelength.to(u.m).value,
+        k = k.to(u.m**(-1)).value,
+        w = w.to(u.s**(-1)).value,
         f_k = f_k.to(u.s / u.m).value,
         v_k = v_k.to(u.m / u.s).value,
         n = n.to(u.m**(-3)).value,
-        probe_vec=probe_vec,
-        scatter_vec=scatter_vec,
         z = z,
         mass=mass.to(u.kg).value
     )
@@ -252,6 +219,9 @@ def spectral_density_lite(
 ):
     wpe = plasma_frequency_lite(n, m_e_si_unitless, 1)
 
+    zbar = np.sum(ifract * ion_z)
+    ni = ifract * n / zbar
+
     scattering_angle = np.arccos(np.dot(probe_vec, scatter_vec))
 
     # Convert wavelengths to angular frequencies (electromagnetic waves, so
@@ -270,7 +240,7 @@ def spectral_density_lite(
     # Compute the wavenumber shift (required by momentum conservation)
     # Eq. 1.7.10 in Sheffield
     k = np.sqrt(ks ** 2 + kl ** 2 - 2 * ks * kl * np.cos(scattering_angle))
-    # Normal vector along k
+    # Unit vector along k
     k_vec = scatter_vec - probe_vec
     k_vec = k_vec / np.linalg.norm(k_vec)
 
@@ -280,23 +250,19 @@ def spectral_density_lite(
     chiI = np.zeros([ifract.size, wavelengths.size], dtype=np.complex128)
 
     for i in range(efract.size):
-        chiE[i, :] = chi_lite(wavelengths=wavelengths,
-                              probe_wavelength=probe_wavelength,
+        chiE[i, :] = chi_lite(k = k,
+                              w = w,
                               f_k = fe_k[i],
                               v_k = ve_k[i],
                               n = n * efract[i],
-                              probe_vec=probe_vec,
-                              scatter_vec=scatter_vec,
                               z = 1,
                               mass=m_e_si_unitless)
     for i in range(ifract.size):
-        chiI[i, :] = chi_lite(wavelengths=wavelengths,
-                              probe_wavelength=probe_wavelength,
+        chiI[i, :] = chi_lite(k = k,
+                              w = w,
                               f_k = fi_k[i],
                               v_k = vi_k[i],
-                              n = n * ifract[i] / ion_z[i],
-                              probe_vec=probe_vec,
-                              scatter_vec=scatter_vec,
+                              n = ni[i],
                               z = ion_z[i],
                               mass=ion_mass[i])
 
@@ -305,7 +271,7 @@ def spectral_density_lite(
 
     econtr = np.zeros([efract.size, w.size], dtype=np.complex128)
     for m in range(efract.size):
-        econtr[m] = (efract[m] * (
+        econtr[m, :] = (efract[m] * (
                 2
                 * np.pi
                 / k
@@ -316,10 +282,11 @@ def spectral_density_lite(
 
     icontr = np.zeros([ifract.size, w.size], dtype=np.complex128)
     for m in range(ifract.size):
-        icontr[m] = ifract[m] * (
+        icontr[m, :] = ifract[m] * (
                 2
                 * np.pi
-                * ion_z[m]
+                * ion_z[m] ** 2
+                / zbar
                 / k
                 * np.power(np.abs(np.sum(chiE, axis=0) / epsilon), 2)
                 * np.interp(vph, vi_k[m, :], fi_k[m, :])
@@ -350,7 +317,7 @@ def spectral_density_lite(
             Skw[x0:x1] = 0
 
     vth_e = vth_nonmaxwellian(fe_k, ve_k)
-    alpha = np.sqrt(2) * wpe / (np.mean(k) * vth_e)
+    alpha = wpe / (np.mean(k) * vth_e)
 
     return np.mean(alpha), Skw
 
@@ -706,6 +673,7 @@ def spectral_density_maxwellian_lite(
         wpe = plasma_frequency_lite(ne[i], m_e_si_unitless, 1)
         chiE[i, :] = permittivity_1D_Maxwellian_lite(w_e[i, :], k, vT_e[i], wpe)
 
+
     # Treatment of multiple species is an extension of the discussion in
     # Sheffield Sec. 5.1
     chiI = np.zeros([ifract.size, w.size], dtype=np.complex128)
@@ -732,7 +700,8 @@ def spectral_density_maxwellian_lite(
         icontr[m, :] = ifract[m] * (
             2
             * np.sqrt(np.pi)
-            * ion_z[m]
+            * ion_z[m] ** 2
+            / zbar
             / k
             / vT_i[m]
             * np.power(np.abs(np.sum(chiE, axis=0) / epsilon), 2)
@@ -1490,3 +1459,6 @@ def spectral_density_maxwellian_model(  # noqa: C901, PLR0912, PLR0915
         independent_vars=["wavelengths"],
         nan_policy="omit",
     )
+
+
+
