@@ -57,8 +57,10 @@ m_e_si_unitless = const.m_e.si.value
 
 # this imports the tabulated data for W and then defines the interpolators
 #path_to_plasmapy = os.path.dirname(inspect.getfile(plasmapy))
-
-hf = h5py.File("W_tabulated.h5", "r")
+from pathlib import Path
+path = str(Path(__file__).parent)
+print(path)
+hf = h5py.File(path+"//W_tabulated.h5", "r")
 
 
 p = np.array(hf["p"])
