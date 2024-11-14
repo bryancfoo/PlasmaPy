@@ -5,9 +5,11 @@ Defines the Thomson scattering analysis module as part of
 
 __all__ = [
     "spectral_density",
+    "spectral_density_supergaussian",
     "spectral_density_model",
+    "spectral_density_supergaussian_model",
 ]
-__lite_funcs__ = ["spectral_density_lite"]
+__lite_funcs__ = ["spectral_density_lite", "spectral_density_supergaussian_lite"]
 
 import warnings
 from collections.abc import Callable
