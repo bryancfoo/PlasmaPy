@@ -12,6 +12,9 @@ __lite_funcs__ = ["spectral_density_lite"]
 import warnings
 from collections.abc import Callable
 from typing import Any
+import os
+import h5py
+import inspect
 
 import astropy.constants as const
 import astropy.units as u
