@@ -16,6 +16,9 @@ import os
 import h5py
 import inspect
 
+from scipy import interpolate
+from scipy.special import gamma, gammaincc
+
 import astropy.constants as const
 import astropy.units as u
 import numpy as np
@@ -51,9 +54,9 @@ m_e_si_unitless = const.m_e.si.value
 
 
 # this imports the tabulated data for W and then defines the interpolators
-path_to_plasmapy = os.path.dirname(inspect.getfile(plasmapy))
+#path_to_plasmapy = os.path.dirname(inspect.getfile(plasmapy))
 
-hf = h5py.File(path_to_plasmapy + "/src/diagnostics/W_tabulated.h5", "r")
+hf = h5py.File("W_tabulated.h5", "r")
 
 
 p = np.array(hf["p"])
@@ -647,23 +650,22 @@ def spectral_density(  # noqa: C901, PLR0912, PLR0915
 
 def spectral_density_supergaussian_lite(
     wavelengths,
-    probe_wavelength: numbers.Real,
-    n: numbers.Real,
-    T_e: np.ndarray,
-    T_i: np.ndarray,
-    p_e: np.ndarray,
-    p_i: np.ndarray,
-    efract: np.ndarray,
-    ifract: np.ndarray,
-    ion_z: np.ndarray,
-    ion_mass: np.ndarray,
-    electron_vel: np.ndarray,
-    ion_vel: np.ndarray,
-    probe_vec: np.ndarray,
-    scatter_vec: np.ndarray,
-    notches: Optional[np.ndarray] = None,
-    instr_func_arr: Optional[np.ndarray] = None,
-) -> tuple[Union[np.floating, np.ndarray], np.ndarray]:
+    probe_wavelength,
+    n,
+    T_e,
+    T_i,
+    p_e,
+    p_i,
+    efract,
+    ifract,
+    ion_z,
+    ion_mass,
+    electron_vel,
+    ion_vel,
+    probe_vec,
+    scatter_vec,
+    instr_func_arr = None,
+):
     scattering_angle = np.arccos(np.dot(probe_vec, scatter_vec))
 
     # Calculate plasma parameters
@@ -770,16 +772,6 @@ def spectral_density_supergaussian_lite(
     if instr_func_arr is not None:
         Skw = np.convolve(Skw, instr_func_arr, mode="same")
 
-    # add notch(es) to the spectrum if any are provided
-    if notches is not None:
-        if np.shape(notches) == (2,):
-            notches = np.array([notches])
-
-        for notch in notches:
-            x0 = np.argmin(np.abs(wavelengths - notch[0]))
-            x1 = np.argmin(np.abs(wavelengths - notch[1]))
-            Skw[x0:x1] = 0
-
     return np.mean(alpha), Skw
 
 
@@ -806,9 +798,9 @@ def spectral_density_supergaussian(
     ion_vel: u.m / u.s = None,
     probe_vec=None,
     scatter_vec=None,
-    notches=None,
-    instr_func: Optional[Callable] = None,
-) -> tuple[Union[np.floating, np.ndarray], np.ndarray]:
+    instr_func = None,
+):
+
     # Validate efract
     if efract is None:
         efract = np.ones(1)
@@ -936,24 +928,6 @@ def spectral_density_supergaussian(
     else:
         instr_func_arr = None
 
-    # Valildate notch input
-
-    if notches is not None:
-        notches_unitless = notches.to(u.m).value
-
-        if len(np.shape(notches_unitless)) == 1:
-            notches_unitless = np.array([notches_unitless])
-
-        for notch in notches_unitless:
-            if np.shape(notch) != (2,):
-                raise ValueError("Notches must be pairs of values")
-            if notch[0] > notch[1]:
-                raise ValueError(
-                    "First element of notch cannot be greater than second element."
-                )
-    else:
-        notches_unitless = None
-
     alpha, Skw = spectral_density_supergaussian_lite(
         wavelengths.to(u.m).value,
         probe_wavelength.to(u.m).value,
@@ -971,7 +945,6 @@ def spectral_density_supergaussian(
         probe_vec=probe_vec,
         scatter_vec=scatter_vec,
         instr_func_arr=instr_func_arr,
-        notches=notches_unitless,
     )
 
     return alpha, Skw * u.s / u.rad
@@ -1383,7 +1356,6 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
     ion_vdir = settings["ion_vdir"]
     probe_wavelength = settings["probe_wavelength"]
     instr_func_arr = settings["instr_func_arr"]
-    notches = settings["notches"]
 
     # LOAD FROM PARAMS
     n = params["n"]
@@ -1420,8 +1392,7 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
         ion_vel=ion_vel,
         probe_vec=probe_vec,
         scatter_vec=scatter_vec,
-        instr_func_arr=instr_func_arr,
-        notches=notches,
+        instr_func_arr=instr_func_arr
     )
 
     model_Skw *= 1 / np.max(model_Skw)
@@ -1672,9 +1643,6 @@ def spectral_density_supergaussian_model(wavelengths, settings, params):
             "both the data and wavelength arrays using "
             "`numpy.delete`."
         )
-
-    if "notches" not in settings:
-        settings["notches"] = None
 
     # TODO: raise an exception if the number of any of the ion or electron
     #       quantities isn't consistent with the number of that species defined
