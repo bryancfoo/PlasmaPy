@@ -1071,7 +1071,7 @@ def _spectral_density_model(wavelengths, settings=None, **params):
         notch=notch,
     )
 
-    model_Skw *= 1 / np.max(model_Skw)
+    model_Skw *= 1 / np.sum(model_Skw)
 
     # Add background after normalization
     model_Skw += background
@@ -1398,7 +1398,7 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
         instr_func_arr=instr_func_arr
     )
 
-    model_Skw *= 1 / np.max(model_Skw)
+    model_Skw *= 1 / np.sum(model_Skw)
 
     return model_Skw
 
