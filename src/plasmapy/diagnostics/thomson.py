@@ -1380,11 +1380,11 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
     T_i *= 11604.51812155
 
     alpha, model_Skw = spectral_density_supergaussian_lite(
-        wavelengths,
-        probe_wavelength,
-        n,
-        T_e,
-        T_i,
+        wavelengths=wavelengths,
+        probe_wavelength=probe_wavelength,
+        n=n,
+        T_e=T_e,
+        T_i=T_i,
         efract=efract,
         ifract=ifract,
         p_e=p_e,
