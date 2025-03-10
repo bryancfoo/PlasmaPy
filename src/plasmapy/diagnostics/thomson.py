@@ -1544,7 +1544,7 @@ def spectral_density_supergaussian_model(wavelengths, settings, params):
 
     # Create arrays of ion Z and mass from particles given
     settings["ion_z"] = ions.charge_number
-    settings["ion_mass"] = ions.mass
+    settings["ion_mass"] = ions.mass.value
 
     # **************
     # efract and ifract
