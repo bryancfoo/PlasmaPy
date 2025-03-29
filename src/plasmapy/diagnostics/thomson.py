@@ -73,21 +73,23 @@ W_imag_interp = interpolate.RectBivariateSpline(p, xi, W_imag, kx=3, ky=3)
 
 hf.close()
 
-# compute the derivative of the plasma dispersion function via tabulated functions
-def Wp(p, zeta):
+# compute the derivative of the plasma dispersion function for supergaussian distributions
+def Wp(p, zeta, order = 4):
     C = p / (2 * gamma(3 / p)) * (1 / 3 * gamma(5 / p) / gamma(3 / p)) ** (3 / 2)
     alpha = (1 / 3 * gamma(5 / p) / gamma(3 / p)) ** (1 / 2)
 
-    order2 = 1 / (alpha * zeta * np.sqrt(2)) * gamma(3 / p)
-    order4 = 1 / np.power((alpha * zeta * np.sqrt(2)), 3) * gamma(5 / p)
-    order6 = 1 / np.power((alpha * zeta * np.sqrt(2)), 5) * gamma(7 / p)
-    order8 = 1 / np.power((alpha * zeta * np.sqrt(2)), 7) * gamma(9 / p)
-    order10 = 1 / np.power((alpha * zeta * np.sqrt(2)), 9) * gamma(11 / p)
-
+    #the function is tabulated for low phase velocities
     W_near = (W_real_interp.ev(p, np.abs(zeta))
               + 1.0j * np.sign(zeta) * W_imag_interp.ev(p, np.abs(zeta)))
 
-    W_far = (-2 * C / (alpha ** 2 * zeta * np.sqrt(2) * p) * (order2 + order4 + order6 + order8 + order10)
+    #for high phase velocities a Laurent expansion is used
+    n = np.ones(np.concatenate([np.ones(zeta.ndim), [order // 2]]).astype(np.int32))
+    n = np.multiply(n, np.arange(order // 2))
+
+    zeta_reshaped = zeta.reshape(zeta.shape + (1,))
+    W_far_expansion = 1 / np.power((alpha * zeta_reshaped * np.sqrt(2)), 2 * n + 1) * gamma((2 * n + 3) / p)
+
+    W_far = (-2 * C / (alpha ** 2 * zeta * np.sqrt(2) * p) * np.sum(W_far_expansion, axis = -1)
              + 1.0j * np.sign(zeta) * np.pi * C * np.exp(-np.power(np.abs(alpha * zeta * np.sqrt(2)), p)))
 
     W_near[np.abs(zeta)>10] = 0
