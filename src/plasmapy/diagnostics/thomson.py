@@ -1364,10 +1364,7 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
     lmfit Model function for fitting Thomson spectra
     For descriptions of arguments, see the `thomson_model` function.
     """
-
     # LOAD FROM SETTINGS
-    ion_z = settings["ion_z"]
-    ion_mass = settings["ion_mass"]
     probe_vec = settings["probe_vec"]
     scatter_vec = settings["scatter_vec"]
     electron_vdir = settings["electron_vdir"]
@@ -1377,8 +1374,11 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
 
     # LOAD FROM PARAMS
     n = params["n"]
+    background = params["background"]
     T_e = _params_to_array(params, "T_e")
     T_i = _params_to_array(params, "T_i")
+    ion_mu = _params_to_array(params, "ion_mu")
+    ion_z = _params_to_array(params, "ion_z")
     efract = _params_to_array(params, "efract")
     ifract = _params_to_array(params, "ifract")
     p_e = _params_to_array(params, "p_e")
@@ -1390,9 +1390,12 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
     electron_vel = electron_speed[:, np.newaxis] * electron_vdir
     ion_vel = ion_speed[:, np.newaxis] * ion_vdir
 
-    # Convert temperatures from eV to Kelvin (required by fast_spectral_density)
+    # Convert temperatures from eV to kelvin (required by fast_spectral_density)
     T_e *= 11604.51812155
     T_i *= 11604.51812155
+
+    # lite function takes ion mass, not mu=m_i/m_p
+    ion_mass = ion_mu * m_p_si_unitless
 
     alpha, model_Skw = spectral_density_supergaussian_lite(
         wavelengths=wavelengths,
@@ -1498,6 +1501,25 @@ def spectral_density_supergaussian_model(wavelengths, settings, params):
             f"'params': {missing_params}"
         )
 
+    # Add background if not provided
+    if "background" not in params:
+        params.add("background", value=0.0, vary=False)
+
+    # Add ion values as fixed parameters if a particle list is provided
+    # in settings
+    # Do not override any existing parameters
+    if "ions" in settings:
+        for i, ion in enumerate(settings["ions"]):
+            _ion = Particle(ion)
+            if f"ion_mu_{i!s}" not in params:
+                params.add(
+                    f"ion_mu_{i!s}",
+                    value=_ion.mass.to(u.kg).value / m_p_si_unitless,
+                    vary=False,
+                )
+            if f"ion_z_{i!s}" not in params:
+                params.add(f"ion_z_{i!s}", value=_ion.charge_number, vary=False)
+
     # **********************
     # Count number of populations
     # **********************
@@ -1513,53 +1535,15 @@ def spectral_density_supergaussian_model(wavelengths, settings, params):
     # **********************
     # Required settings and parameters per population
     # **********************
-    for p, nums in zip(["T_e", "T_i", "p_e", "p_i"], [num_e, num_i]):
+    for p, nums in zip(
+            ["T_e", "T_i", "p_e", "p_i", "ion_mu", "ion_z"], [num_e, num_i, num_i, num_i], strict=False
+    ):
         for num in range(nums):
-            key = f"{p}_{str(num)}"
+            key = f"{p}_{num!s}"
             if key not in params:
                 raise ValueError(
                     f"{p} was not provided in kwarg 'parameters', but is required."
                 )
-
-    # **************
-    # ions
-    # **************
-
-    ions = settings["ions"]
-    # Condition ions
-    # If a single value is provided, turn into a particle list
-    if isinstance(ions, ParticleList):
-        pass
-    elif isinstance(ions, str):
-        ions = ParticleList([Particle(ions)])
-    # If a list is provided, ensure all values are Particles, then convert
-    # to a ParticleList
-    elif isinstance(ions, list):
-        for ii, ion in enumerate(ions):
-            if isinstance(ion, Particle):
-                continue
-            ions[ii] = Particle(ion)
-        ions = ParticleList(ions)
-    else:
-        raise TypeError(
-            "The type of object provided to the ``ions`` keyword "
-            f"is not supported: {type(ions)}"
-        )
-
-    # Validate ions
-    if len(ions) == 0:
-        raise ValueError("At least one ion species needs to be defined.")
-
-    try:
-        if sum(ion.charge_number <= 0 for ion in ions):
-            raise ValueError("All ions must be positively charged.")  # noqa: TC301
-    # Catch error if charge information is missing
-    except ChargeError as ex:
-        raise ValueError("All ions must be positively charged.") from ex
-
-    # Create arrays of ion Z and mass from particles given
-    settings["ion_z"] = ions.charge_number
-    settings["ion_mass"] = ions.mass.value
 
     # **************
     # efract and ifract
@@ -1636,7 +1620,7 @@ def spectral_density_supergaussian_model(wavelengths, settings, params):
         eval_w = np.linspace(-wspan, wspan, num=wavelengths.size)
         instr_func_arr = instr_func(eval_w * u.m)
 
-        if type(instr_func_arr) != np.ndarray:
+        if type(instr_func_arr) is not np.ndarray:
             raise ValueError(
                 "instr_func must be a function that returns a "
                 "np.ndarray, but the provided function returns "
