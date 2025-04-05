@@ -59,7 +59,7 @@ m_e_si_unitless = const.m_e.si.value
 #path_to_plasmapy = os.path.dirname(inspect.getfile(plasmapy))
 from pathlib import Path
 path = str(Path(__file__).parent)
-hf = h5py.File(path+"//W_tabulated.h5", "r")
+hf = h5py.File(path+"//W_tabulated_old.h5", "r")
 
 
 p = np.array(hf["p"])
