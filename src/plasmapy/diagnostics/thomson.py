@@ -74,7 +74,7 @@ W_imag_interp = interpolate.RectBivariateSpline(p, xi, W_imag, kx=3, ky=3)
 hf.close()
 
 # compute the derivative of the plasma dispersion function for supergaussian distributions
-def Wp(p, zeta, order = 4):
+def Wp(p, zeta, order = 8):
     C = p / (2 * gamma(3 / p)) * (1 / 3 * gamma(5 / p) / gamma(3 / p)) ** (3 / 2)
     alpha = (1 / 3 * gamma(5 / p) / gamma(3 / p)) ** (1 / 2)
 
@@ -1086,7 +1086,7 @@ def _spectral_density_model(wavelengths, settings=None, **params):
         notch=notch,
     )
 
-    model_Skw *= 1 / np.nansum(model_Skw)
+    model_Skw *= 1 / np.nanmax(model_Skw)
 
     # Add background after normalization
     model_Skw += background
@@ -1416,7 +1416,7 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
         instr_func_arr=instr_func_arr
     )
 
-    model_Skw *= 1 / np.nansum(model_Skw)
+    model_Skw *= 1 / np.nanmax(model_Skw)
 
     return model_Skw
 
