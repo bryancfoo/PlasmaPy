@@ -418,6 +418,7 @@ def spectral_density_supergaussian_lite(
 
     econtr = np.zeros([efract.size, w.size], dtype=np.complex128)
     for m in range(efract.size):
+        print(ue)
         econtr[m, :] = efract[m] * (
             2
             * np.pi
