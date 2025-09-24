@@ -855,7 +855,7 @@ class ParticleTracker:
 
         return dt
 
-    def _interpolate_grid(self):
+    def _interpolate_grid(self) -> None:
         # Get a list of positions (input for interpolator)
         pos_tracked = self.x[self._tracked_particle_mask]
 
@@ -962,7 +962,7 @@ class ParticleTracker:
         velocity_unit_vectors = np.multiply(
             1 / current_speeds, self.v[self._tracked_particle_mask]
         )
-        dx = np.multiply(current_speeds, self.dt)  # type: ignore[arg-type]
+        dx = np.multiply(current_speeds, self.dt)
 
         stopping_power = np.zeros((self.num_particles_tracked, 1))
         relevant_kinetic_energy = (
@@ -1075,7 +1075,7 @@ class ParticleTracker:
             np.bool_
         )
 
-    def _reset_cache(self):
+    def _reset_cache(self) -> None:
         """
         Reset the cached properties.
 

@@ -9,6 +9,7 @@ on:
     branches:
     - main
 
+permissions: {}
 
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,25 +75,30 @@ jobs:
           python: '3.13'
           nox_session: run_tests_with_dev_version_of(lmfit)
 
-        - name: Documentation, Python 3.12, Ubuntu
+        - name: Documentation, Python 3.13, Ubuntu
           os: ubuntu-latest
-          python: '3.12'
+          python: '3.13'
           nox_session: docs
 
-        - name: Documentation, Python 3.12, sphinx-dev, Ubuntu
+        - name: Documentation, Python 3.13, sphinx-dev, Ubuntu
           os: ubuntu-latest
-          python: '3.12'
+          python: '3.13'
           nox_session: build_docs_with_dev_version_of(sphinx)
 
-        - name: Documentation, Python 3.12, sphinx_rtd_theme-dev, Ubuntu
+        - name: Documentation, Python 3.13, sphinx_rtd_theme-dev, Ubuntu
           os: ubuntu-latest
-          python: '3.12'
+          python: '3.13'
           nox_session: build_docs_with_dev_version_of(sphinx_rtd_theme)
 
-        - name: Documentation, Python 3.12, nbsphinx-dev, Ubuntu
+        - name: Documentation, Python 3.13, nbsphinx-dev, Ubuntu
+          os: ubuntu-latest
+          python: '3.13'
+          nox_session: build_docs_with_dev_version_of(nbsphinx)
+
+        - name: Documentation, Python 3.12, plasmapy_sphinx-dev, Ubuntu
           os: ubuntu-latest
           python: '3.12'
-          nox_session: build_docs_with_dev_version_of(nbsphinx)
+          nox_session: build_docs_with_dev_version_of(plasmapy_sphinx)
 
         - name: Static type checking with mypy, Python 3.13, Windows
           os: windows-latest
@@ -142,43 +148,30 @@ jobs:
     steps:
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
-        fetch-depth: 0
+        persist-credentials: false
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python }}
-        cache: pip
-
-    - name: Install Graphviz for documentation builds
-      if: startsWith(matrix.name, 'Documentation')
+    - name: Install Graphviz for doc builds
+      if: contains(matrix.nox_session, 'docs')
       uses: ts-graphviz/setup-graphviz@v2
 
-    - name: Install pandoc for documentation builds
-      # This step only works on Ubuntu
-      if: startsWith(matrix.name, 'Documentation')
+    - name: Install pandoc for doc builds
+      # This step requires Ubuntu
+      if: contains(matrix.nox_session, 'docs')
       run: |
         sudo apt update
         sudo apt-get install -y pandoc
 
-    - name: Install Nox and uv
-      run: python -m pip install --progress-bar off --upgrade nox uv
-
-    - name: Cache .nox to shorten virtual environment creation time
-      uses: actions/cache@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
       with:
-        path: |
-          .nox
-          .venv
-          .cache/uv
-          cache/uv
-        # Changing pyproject.toml or requirements invalidates the cache
-        key: ${{ matrix.nox_session }}-${{ matrix.python }}-${{ runner.os }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+        python-version: ${{ matrix.python }}
+        enable-cache: true
+        cache-suffix: ${{ matrix.nox_session }}-${{ matrix.python }}-${{ runner.os }}
 
     - name: Run Nox session
-      run: nox -s '${{ matrix.nox_session }}'
+      run: uvx nox -s '${{ matrix.nox_session }}'
 
     - name: Upload coverage reports to Codecov
       if: ${{ contains(matrix.nox_session, 'cov') }}
