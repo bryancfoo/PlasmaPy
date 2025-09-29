@@ -1238,7 +1238,7 @@ def spectral_density_model(  # noqa: C901, PLR0912, PLR0915
             key = f"{p}_{num!s}"
             if key not in params:
                 raise ValueError(
-                    f"{p} was not provided in kwarg 'parameters', but is required."
+                    f"{p}_{num!s} was not provided in kwarg 'parameters', but is required."
                 )
 
     # **************
@@ -1538,7 +1538,7 @@ def spectral_density_supergaussian_model(wavelengths, settings, params):
     # Required settings and parameters per population
     # **********************
     for p, nums in zip(
-            ["T_e", "T_i", "p_e", "p_i", "ion_mu", "ion_z"], [num_e, num_i, num_i, num_i], strict=False
+            ["T_e", "T_i", "p_e", "p_i", "ion_mu", "ion_z"], [num_e, num_i, num_e, num_i, num_i, num_i], strict=False
     ):
         for num in range(nums):
             key = f"{p}_{num!s}"
