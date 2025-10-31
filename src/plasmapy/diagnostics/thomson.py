@@ -1419,9 +1419,10 @@ def _spectral_density_supergaussian_model(wavelengths, settings=None, **params):
     )
 
     model_Skw *= 1 / np.nanmax(model_Skw)
-    model_Skw *= 1 / np.nanmax(model_Skw)
 
     model_Skw += background
+
+    model_Skw *= 1 / np.nanmax(model_Skw)
 
     return model_Skw
 
